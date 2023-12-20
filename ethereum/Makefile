@@ -32,13 +32,16 @@ node_modules: package-lock.json
 # When adding a new dependency, make sure to specify the exact commit hash, and
 # the --no-git and --no-commit flags (see lib/forge-std below)
 .PHONY: forge_dependencies
-forge_dependencies: lib/forge-std lib/openzeppelin-contracts
+forge_dependencies: lib/forge-std lib/openzeppelin-contracts lib/wormhole-solidity-sdk
 
 lib/forge-std:
 	forge install foundry-rs/forge-std@v1.5.5 --no-git --no-commit
 
 lib/openzeppelin-contracts:
 	forge install openzeppelin/openzeppelin-contracts@0457042d93d9dfd760dbaa06a4d2f1216fdbe297 --no-git --no-commit
+
+lib/wormhole-solidity-sdk:
+	forge install wormhole-foundation/wormhole-solidity-sdk@bacbe82e6ae3f7f5ec7cdcd7d480f1e528471bbb --no-git --no-commit
 
 dependencies: node_modules forge_dependencies
 
