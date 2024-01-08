@@ -714,7 +714,42 @@ func TestMarshalOfEthCallWithFinalityQueryWithSafeShouldSucceed(t *testing.T) {
 	require.NoError(t, err)
 }
 
-///////////// End of EthCallWithFinality tests /////////////////////////////////
+///////////// Solana Account Query tests /////////////////////////////////
+
+func createSolanaAccountQueryRequestForTesting(t *testing.T) *QueryRequest {
+	t.Helper()
+
+	callRequest1 := &SolanaAccountQueryRequest{
+		Commitment: "finalized",
+		Accounts:   []string{"Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb", "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbc"},
+	}
+
+	perChainQuery1 := &PerChainQueryRequest{
+		ChainId: vaa.ChainIDSolana,
+		Query:   callRequest1,
+	}
+
+	queryRequest := &QueryRequest{
+		Nonce:           1,
+		PerChainQueries: []*PerChainQueryRequest{perChainQuery1},
+	}
+
+	return queryRequest
+}
+
+func TestSolanaAccountQueryRequestMarshalUnmarshal(t *testing.T) {
+	queryRequest := createSolanaAccountQueryRequestForTesting(t)
+	queryRequestBytes, err := queryRequest.Marshal()
+	require.NoError(t, err)
+
+	var queryRequest2 QueryRequest
+	err = queryRequest2.Unmarshal(queryRequestBytes)
+	require.NoError(t, err)
+
+	assert.True(t, queryRequest.Equal(&queryRequest2))
+}
+
+///////////// End of Solana Account Query tests ///////////////////////////
 
 func TestPostSignedQueryRequestShouldFailIfNoOneIsListening(t *testing.T) {
 	queryRequest := createQueryRequestForTesting(t, vaa.ChainIDPolygon)

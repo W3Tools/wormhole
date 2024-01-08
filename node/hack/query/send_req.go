@@ -117,6 +117,39 @@ func main() {
 	// END SETUP
 	//
 
+	//
+	// Solana Tests
+	//
+
+	{
+		logger.Info("Running Solana tests")
+
+		// Start of query creation...
+		callRequest := &query.SolanaAccountQueryRequest{
+			Commitment:      "finalized",
+			DataSliceOffset: 0,
+			DataSliceLength: 100,
+			Accounts: []string{
+				"Bridge1p5gheXUvJ6jGWGeCsgPKgnE3YgdGKRVCMY9o",  // Devnet Core Bridge
+				"B6RHG3mfcckmrYN1UhmJzyS1XX3fZKbkeUcpJe9Sy3FE", // Devnet Token Bridge
+				"NFTWqJR8YnRVqPDvTJrYuLrQDitTG5AScqbeghi4zSA",  // Devnet NFT Bridge
+				// "worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth", // Mainnet Core Bridge
+				// "wormDTUJ6AWPNvk59vGQbDvGJmqbDTdgWgAqcLBCgUb", // Mainnet Token Bridge
+				// "WnFt12ZrnzZrFZkt2xsNsaNWoQribnuQ5B5FrDbwDhD", // Mainnet NFT Bridge
+			},
+		}
+
+		queryRequest := createSolanaQueryRequest(callRequest)
+		sendSolanaQueryAndGetRsp(queryRequest, sk, th_req, ctx, logger, sub)
+
+		logger.Info("Solana tests complete!")
+	}
+	// return
+
+	//
+	// EVM Tests
+	//
+
 	wethAbi, err := abi.JSON(strings.NewReader("[{\"constant\":true,\"inputs\":[],\"name\":\"name\",\"outputs\":[{\"name\":\"\",\"type\":\"string\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[],\"name\":\"totalSupply\",\"outputs\":[{\"name\":\"\",\"type\":\"uint256\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"}]"))
 	if err != nil {
 		panic(err)
@@ -344,6 +377,113 @@ func sendQueryAndGetRsp(queryRequest *query.QueryRequest, sk *ecdsa.PrivateKey, 
 
 						resultStr := hexutil.Encode(resp)
 						logger.Info("found matching response", zap.Int("idx", idx), zap.Uint64("number", localResp.BlockNumber), zap.String("hash", localResp.Hash.String()), zap.String("time", localResp.Time.String()), zap.String("method", methods[idx]), zap.Any("resultDecoded", result), zap.String("resultStr", resultStr))
+					}
+				}
+			}
+		default:
+			continue
+		}
+		if isMatchingResponse {
+			break
+		}
+	}
+}
+
+func createSolanaQueryRequest(callRequest *query.SolanaAccountQueryRequest) *query.QueryRequest {
+	queryRequest := &query.QueryRequest{
+		Nonce: rand.Uint32(),
+		PerChainQueries: []*query.PerChainQueryRequest{
+			{
+				ChainId: 1,
+				Query:   callRequest,
+			},
+		},
+	}
+	return queryRequest
+}
+
+func sendSolanaQueryAndGetRsp(queryRequest *query.QueryRequest, sk *ecdsa.PrivateKey, th *pubsub.Topic, ctx context.Context, logger *zap.Logger, sub *pubsub.Subscription) {
+	queryRequestBytes, err := queryRequest.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	numQueries := len(queryRequest.PerChainQueries)
+
+	// Sign the query request using our private key.
+	digest := query.QueryRequestDigest(common.UnsafeDevNet, queryRequestBytes)
+	sig, err := ethCrypto.Sign(digest.Bytes(), sk)
+	if err != nil {
+		panic(err)
+	}
+
+	signedQueryRequest := &gossipv1.SignedQueryRequest{
+		QueryRequest: queryRequestBytes,
+		Signature:    sig,
+	}
+
+	msg := gossipv1.GossipMessage{
+		Message: &gossipv1.GossipMessage_SignedQueryRequest{
+			SignedQueryRequest: signedQueryRequest,
+		},
+	}
+
+	b, err := proto.Marshal(&msg)
+	if err != nil {
+		panic(err)
+	}
+
+	err = th.Publish(ctx, b)
+	if err != nil {
+		panic(err)
+	}
+
+	logger.Info("Waiting for message...")
+	// TODO: max wait time
+	// TODO: accumulate signatures to reach quorum
+	for {
+		envelope, err := sub.Next(ctx)
+		if err != nil {
+			logger.Panic("failed to receive pubsub message", zap.Error(err))
+		}
+		var msg gossipv1.GossipMessage
+		err = proto.Unmarshal(envelope.Data, &msg)
+		if err != nil {
+			logger.Info("received invalid message",
+				zap.Binary("data", envelope.Data),
+				zap.String("from", envelope.GetFrom().String()))
+			continue
+		}
+		var isMatchingResponse bool
+		switch m := msg.Message.(type) {
+		case *gossipv1.GossipMessage_SignedQueryResponse:
+			logger.Info("query response received", zap.Any("response", m.SignedQueryResponse),
+				zap.String("responseBytes", hexutil.Encode(m.SignedQueryResponse.QueryResponse)),
+				zap.String("sigBytes", hexutil.Encode(m.SignedQueryResponse.Signature)))
+			isMatchingResponse = true
+
+			var response query.QueryResponsePublication
+			err := response.Unmarshal(m.SignedQueryResponse.QueryResponse)
+			if err != nil {
+				logger.Warn("failed to unmarshal response", zap.Error(err))
+				break
+			}
+			if bytes.Equal(response.Request.QueryRequest, queryRequestBytes) && bytes.Equal(response.Request.Signature, sig) {
+				// TODO: verify response signature
+				isMatchingResponse = true
+
+				if len(response.PerChainResponses) != numQueries {
+					logger.Warn("unexpected number of per chain query responses", zap.Int("expectedNum", numQueries), zap.Int("actualNum", len(response.PerChainResponses)))
+					break
+				}
+				// Do double loop over responses
+				for index := range response.PerChainResponses {
+					logger.Info("per chain query response index", zap.Int("index", index))
+
+					switch r := response.PerChainResponses[index].Response.(type) {
+					case *query.SolanaAccountQueryResponse:
+						logger.Info("solana query per chain response", zap.Any("pcr", r))
+					default:
+						panic("unsupported query type, should be solana")
 					}
 				}
 			}
